@@ -57,20 +57,14 @@ async def call_chatgpt5(
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": context},
-                    {
-                        "type": "image_url",
-                        "image_url": f"data:{image.content_type};base64,{image_base64}",
-                    },
-                ],
+                "content": f"{context}\n[Image: data:{image.content_type};base64,{image_base64}]",
             },
         ],
         max_tokens=400,
         user=user_id,
     )
 
-    content = response.choices[0].message.get("content", "{}")
+    content = getattr(response.choices[0].message, "content", "{}")
     try:
         data = json.loads(content)
     except json.JSONDecodeError as exc:
