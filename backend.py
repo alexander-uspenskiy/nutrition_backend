@@ -52,12 +52,18 @@ async def call_chatgpt5(
     )
 
     response = client.chat.completions.create(
-        model="chatgpt-5",
+        model="gpt-5",
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt + " Return only valid JSON. No markdown, no code fences, no explanations."},
             {
                 "role": "user",
-                "content": f"{context}\n[Image: data:{image.content_type};base64,{image_base64}]",
+                "content": [
+                    {"type": "text", "text": context or ""},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{image.content_type};base64,{image_base64}"}
+                    }
+                ],
             },
         ],
         max_tokens=400,
