@@ -1,15 +1,26 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel, ValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import base64
 import json
 import os
 import logging
+import time
 from dotenv import load_dotenv
 
 from openai import OpenAI
 
 app = FastAPI()
+
+# CORS configuration for development (allow frontend origins)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Load .env if present and set up basic logging
 load_dotenv()
@@ -70,8 +81,9 @@ async def call_chatgpt5(
         "Limit output to 400 tokens."
     )
 
+    start_time = time.time()
     response = client.chat.completions.create(
-        model="gpt-5",
+        model="gpt-5-nano",
         messages=[
             {"role": "system", "content": system_prompt + " Return only valid JSON. No markdown, no code fences, no explanations."},
             {
@@ -85,20 +97,42 @@ async def call_chatgpt5(
                 ],
             },
         ],
-        max_completion_tokens=400,
         user=user_id,
+        response_format={"type": "json_object"},
     )
+    elapsed = time.time() - start_time
+    logger.info("Model call took %.2f seconds", elapsed)
+    # Extract text content from response (may be a string or a list of parts)
+    msg = response.choices[0].message
+    content = getattr(msg, "content", None)
+    if isinstance(content, str):
+        content_text = content
+    elif isinstance(content, list):
+        # concatenate any text-like parts
+        parts = []
+        for p in content:
+            # SDK may return {"type":"output_text","text":"..."} or {"type":"text","text":"..."}
+            if isinstance(p, dict):
+                t = p.get("text") or p.get("content")
+                if t:
+                    parts.append(str(t))
+        content_text = "".join(parts)
+    else:
+        content_text = ""
 
-    content = getattr(response.choices[0].message, "content", "{}")
-
-    if not content:
+    if not content_text:
+        try:
+            # Log a compact form of the whole choice for debugging
+            logger.error("Empty model content | choice=%s", json.dumps(response.choices[0].model_dump(exclude_none=False))[:1500])
+        except Exception:
+            pass
         logger.error("Model returned empty content")
         raise HTTPException(status_code=502, detail="Empty response from model")
 
     try:
-        data = json.loads(content)
+        data = json.loads(content_text)
     except json.JSONDecodeError as exc:
-        logger.error("Invalid JSON from model: %s | raw=%.500s", exc, content)
+        logger.error("Invalid JSON from model: %s | raw=%.500s", exc, content_text)
         raise HTTPException(status_code=502, detail="Invalid JSON returned by model")
 
     # Build NutritionData with safe defaults to avoid ValidationError
@@ -144,3 +178,5 @@ async def analyze_food(
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set in the server environment")
 
     return await call_chatgpt5(file, context or "", user_id)
+
+    
